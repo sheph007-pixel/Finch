@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { extname, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const users = new Map();
 const sessions = new Map();
@@ -48,7 +51,7 @@ const serveStatic = async (res, filePath) => {
   const extension = extname(filePath);
   const contentType = mimeTypes[extension] || 'application/octet-stream';
   try {
-    const data = await readFile(join(process.cwd(), 'public', filePath));
+    const data = await readFile(join(__dirname, 'public', filePath));
     res.writeHead(200, { 'Content-Type': contentType });
     res.end(data);
   } catch {
