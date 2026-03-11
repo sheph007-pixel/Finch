@@ -8,6 +8,42 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const users = new Map();
 const sessions = new Map();
 const organizations = new Map();
+const finchTokens = new Map(); // orgId → access_token
+
+const FINCH_CLIENT_ID = process.env.FINCH_CLIENT_ID || '';
+const FINCH_CLIENT_SECRET = process.env.FINCH_CLIENT_SECRET || '';
+const FINCH_SANDBOX = process.env.FINCH_SANDBOX === 'true';
+const FINCH_BASE_URL = FINCH_SANDBOX ? 'https://sandbox.tryfinch.com' : 'https://api.tryfinch.com';
+const FINCH_REDIRECT_URI = process.env.FINCH_REDIRECT_URI || '';
+
+const finchApi = async (accessToken, path) => {
+  const res = await fetch(`${FINCH_BASE_URL}${path}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Finch-API-Version': '2020-09-17' }
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Finch API ${path} failed (${res.status}): ${text}`);
+  }
+  return res.json();
+};
+
+const finchApiPost = async (accessToken, path, body = {}) => {
+  const res = await fetch(`${FINCH_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      'Finch-API-Version': '2020-09-17'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Finch API ${path} failed (${res.status}): ${text}`);
+  }
+  return res.json();
+};
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -147,11 +183,68 @@ export const handleRequest = async (req, res, baseUrl = 'http://localhost:3000')
     const user = requireAuth(req, res);
     if (!user) return;
     const org = organizations.get(user.orgId);
+    const hasToken = finchTokens.has(user.orgId);
     return sendJson(res, 200, {
       user: { fullName: user.fullName, email: user.email },
       organization: org,
-      finchModulesEnabled: ['Organization', 'Payroll', 'Deductions']
+      finchConnected: hasToken,
+      finchModulesEnabled: hasToken
+        ? ['Company', 'Directory', 'Individual', 'Employment', 'Payment', 'Pay Statement', 'Benefits']
+        : []
     });
+  }
+
+  // Finch Connect – returns the URL the frontend should redirect to
+  if (req.method === 'GET' && url.pathname === '/api/finch/connect') {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    if (!FINCH_CLIENT_ID) {
+      return sendJson(res, 500, { error: 'FINCH_CLIENT_ID not configured.' });
+    }
+    const redirectUri = FINCH_REDIRECT_URI || `${url.protocol}//${url.host}/api/finch/callback`;
+    const products = 'company directory individual employment payment pay_statement benefits';
+    const sandbox = FINCH_SANDBOX ? '&sandbox=true' : '';
+    const connectUrl = `https://connect.tryfinch.com/authorize?client_id=${FINCH_CLIENT_ID}&products=${encodeURIComponent(products)}&redirect_uri=${encodeURIComponent(redirectUri)}${sandbox}`;
+    return sendJson(res, 200, { url: connectUrl });
+  }
+
+  // Finch OAuth callback – exchanges code for access token
+  if (req.method === 'GET' && url.pathname === '/api/finch/callback') {
+    const code = url.searchParams.get('code');
+    if (!code) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      return res.end('Missing authorization code.');
+    }
+    const user = getSessionUser(req);
+    try {
+      const tokenRes = await fetch('https://api.tryfinch.com/auth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: FINCH_CLIENT_ID,
+          client_secret: FINCH_CLIENT_SECRET,
+          code,
+          redirect_uri: FINCH_REDIRECT_URI || `${url.protocol}//${url.host}/api/finch/callback`
+        })
+      });
+      if (!tokenRes.ok) {
+        const err = await tokenRes.text();
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        return res.end(`Token exchange failed: ${err}`);
+      }
+      const { access_token } = await tokenRes.json();
+      if (user) {
+        finchTokens.set(user.orgId, access_token);
+        const org = organizations.get(user.orgId);
+        if (org) org.finchConnected = true;
+      }
+      // Redirect back to the app workspace
+      res.writeHead(302, { Location: '/app' });
+      return res.end();
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      return res.end(`Finch callback error: ${err.message}`);
+    }
   }
 
   if (req.method === 'POST' && url.pathname === '/api/stripe/webhook') {
@@ -161,16 +254,78 @@ export const handleRequest = async (req, res, baseUrl = 'http://localhost:3000')
     });
   }
 
+  // Finch Sync – pull real company + directory data from Finch API
   if (req.method === 'POST' && url.pathname === '/api/finch/sync') {
     const user = requireAuth(req, res);
     if (!user) return;
-    const org = organizations.get(user.orgId);
-    org.employeeCount += 3;
-    return sendJson(res, 200, {
-      ok: true,
-      message: 'Finch sync simulated. Replace with live /employer/company and /employer/directory calls.',
-      organization: org
-    });
+    const accessToken = finchTokens.get(user.orgId);
+    if (!accessToken) {
+      return sendJson(res, 400, { error: 'Finch not connected. Complete Finch Connect first.' });
+    }
+    try {
+      const [company, directory] = await Promise.all([
+        finchApi(accessToken, '/employer/company'),
+        finchApi(accessToken, '/employer/directory')
+      ]);
+      const org = organizations.get(user.orgId);
+      if (org) {
+        org.companyName = company.legal_name || company.entity?.legal_name || org.companyName;
+        org.employeeCount = directory.individuals?.length || org.employeeCount;
+        org.ein = company.ein;
+        org.departments = company.departments;
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        company,
+        directory: directory.individuals || [],
+        organization: org
+      });
+    } catch (err) {
+      return sendJson(res, 502, { error: `Finch sync failed: ${err.message}` });
+    }
+  }
+
+  // Finch Company – get company details
+  if (req.method === 'GET' && url.pathname === '/api/finch/company') {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const accessToken = finchTokens.get(user.orgId);
+    if (!accessToken) return sendJson(res, 400, { error: 'Finch not connected.' });
+    try {
+      const company = await finchApi(accessToken, '/employer/company');
+      return sendJson(res, 200, company);
+    } catch (err) {
+      return sendJson(res, 502, { error: err.message });
+    }
+  }
+
+  // Finch Directory – list all employees
+  if (req.method === 'GET' && url.pathname === '/api/finch/directory') {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const accessToken = finchTokens.get(user.orgId);
+    if (!accessToken) return sendJson(res, 400, { error: 'Finch not connected.' });
+    try {
+      const directory = await finchApi(accessToken, '/employer/directory');
+      return sendJson(res, 200, directory);
+    } catch (err) {
+      return sendJson(res, 502, { error: err.message });
+    }
+  }
+
+  // Finch Individual – get details for specific employees
+  if (req.method === 'POST' && url.pathname === '/api/finch/individual') {
+    const user = requireAuth(req, res);
+    if (!user) return;
+    const accessToken = finchTokens.get(user.orgId);
+    if (!accessToken) return sendJson(res, 400, { error: 'Finch not connected.' });
+    try {
+      const { requests } = await parseJson(req);
+      const data = await finchApiPost(accessToken, '/employer/individual', { requests });
+      return sendJson(res, 200, data);
+    } catch (err) {
+      return sendJson(res, 502, { error: err.message });
+    }
   }
 
   res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

@@ -1,11 +1,29 @@
 <!doctype html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>App Workspace</title><link rel="stylesheet" href="/styles.css" /></head>
 <body><main><h1>Customer App Workspace</h1><p class="muted">Finch integration status and company snapshot.</p>
-<div class="grid"><div class="card"><h3>Connected Finch modules</h3><pre id="modules">Loading...</pre></div>
-<div class="card"><h3>Company profile</h3><pre id="profile">Loading...</pre></div></div>
-<button id="sync">Sync Finch Data</button>
-<button id="logout">Logout</button>
+
+<div id="connect-banner" class="card" style="display:none; border: 1px solid #7c3aed; background: rgba(124,58,237,0.1);">
+  <h3>Connect your payroll provider</h3>
+  <p class="muted">Link your company's payroll system via Finch to sync employee data automatically.</p>
+  <button id="connect-finch" class="primary">Connect with Finch</button>
+</div>
+
+<div class="grid">
+  <div class="card"><h3>Enabled Modules</h3><pre id="modules">Loading...</pre></div>
+  <div class="card"><h3>Company Profile</h3><pre id="profile">Loading...</pre></div>
+</div>
+
+<div id="directory-section" style="display:none;">
+  <div class="card"><h3>Employee Directory</h3><pre id="directory">Loading...</pre></div>
+</div>
+
+<div style="display:flex; gap:1rem; margin-top:1rem;">
+  <button id="sync" style="display:none;">Sync Finch Data</button>
+  <button id="logout">Logout</button>
+</div>
 </main>
 <script>
+let finchConnected = false;
+
 async function load() {
   const res = await fetch('/api/app/dashboard');
   if (!res.ok) {
@@ -14,16 +32,54 @@ async function load() {
     return;
   }
   const data = await res.json();
-  document.getElementById('modules').textContent = JSON.stringify(data.finchModulesEnabled, null, 2);
-  document.getElementById('profile').textContent = JSON.stringify(data.organization, null, 2);
+  finchConnected = data.finchConnected;
+
+  if (finchConnected) {
+    document.getElementById('modules').textContent = data.finchModulesEnabled.join('\n');
+    document.getElementById('profile').textContent = JSON.stringify(data.organization, null, 2);
+    document.getElementById('sync').style.display = '';
+    document.getElementById('connect-banner').style.display = 'none';
+    document.getElementById('directory-section').style.display = '';
+  } else {
+    document.getElementById('modules').textContent = 'No modules active – connect Finch first.';
+    document.getElementById('profile').textContent = JSON.stringify(data.organization, null, 2);
+    document.getElementById('connect-banner').style.display = '';
+  }
 }
 load();
+
+document.getElementById('connect-finch').onclick = async () => {
+  const res = await fetch('/api/finch/connect');
+  const data = await res.json();
+  if (data.url) {
+    window.location.href = data.url;
+  } else {
+    alert(data.error || 'Failed to get Finch Connect URL.');
+  }
+};
+
 document.getElementById('sync').onclick = async () => {
+  document.getElementById('sync').textContent = 'Syncing...';
   const res = await fetch('/api/finch/sync', { method: 'POST' });
   const data = await res.json();
-  if (!res.ok) return;
+  document.getElementById('sync').textContent = 'Sync Finch Data';
+  if (!res.ok) {
+    alert(data.error || 'Sync failed.');
+    return;
+  }
   document.getElementById('profile').textContent = JSON.stringify(data.organization, null, 2);
+  if (data.directory && data.directory.length) {
+    const rows = data.directory.map(emp => {
+      const name = emp.first_name && emp.last_name
+        ? `${emp.first_name} ${emp.last_name}`
+        : emp.id;
+      return `${name}  (${emp.department?.name || 'N/A'})  ${emp.is_active ? 'Active' : 'Inactive'}`;
+    });
+    document.getElementById('directory').textContent = `${data.directory.length} employees\n\n` + rows.join('\n');
+    document.getElementById('directory-section').style.display = '';
+  }
 };
+
 document.getElementById('logout').onclick = async () => {
   await fetch('/api/logout', { method: 'POST' });
   location.href = '/';
