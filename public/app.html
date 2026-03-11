@@ -24,6 +24,13 @@
 <script>
 let finchConnected = false;
 
+// Show Finch error if redirected back with one
+const params = new URLSearchParams(window.location.search);
+if (params.get('finch_error')) {
+  alert('Finch Connect error: ' + params.get('finch_error'));
+  history.replaceState(null, '', '/app');
+}
+
 async function load() {
   const res = await fetch('/api/app/dashboard');
   if (!res.ok) {

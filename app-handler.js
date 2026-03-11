@@ -211,26 +211,34 @@ export const handleRequest = async (req, res, baseUrl = 'http://localhost:3000')
   // Finch OAuth callback – exchanges code for access token
   if (req.method === 'GET' && url.pathname === '/api/finch/callback') {
     const code = url.searchParams.get('code');
+    const error = url.searchParams.get('error');
+    if (error) {
+      const errorDesc = url.searchParams.get('error_description') || error;
+      res.writeHead(302, { Location: `/app?finch_error=${encodeURIComponent(errorDesc)}` });
+      return res.end();
+    }
     if (!code) {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
       return res.end('Missing authorization code.');
     }
     const user = getSessionUser(req);
+    const redirectUri = FINCH_REDIRECT_URI || `${url.protocol}//${url.host}/api/finch/callback`;
     try {
-      const tokenRes = await fetch('https://api.tryfinch.com/auth/token', {
+      const tokenRes = await fetch(`${FINCH_BASE_URL}/auth/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           client_id: FINCH_CLIENT_ID,
           client_secret: FINCH_CLIENT_SECRET,
           code,
-          redirect_uri: FINCH_REDIRECT_URI || `${url.protocol}//${url.host}/api/finch/callback`
+          redirect_uri: redirectUri
         })
       });
       if (!tokenRes.ok) {
         const err = await tokenRes.text();
-        res.writeHead(400, { 'Content-Type': 'text/plain' });
-        return res.end(`Token exchange failed: ${err}`);
+        console.error('Finch token exchange failed:', err);
+        res.writeHead(302, { Location: `/app?finch_error=${encodeURIComponent('Token exchange failed. Check credentials.')}` });
+        return res.end();
       }
       const { access_token } = await tokenRes.json();
       if (user) {
@@ -242,8 +250,9 @@ export const handleRequest = async (req, res, baseUrl = 'http://localhost:3000')
       res.writeHead(302, { Location: '/app' });
       return res.end();
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'text/plain' });
-      return res.end(`Finch callback error: ${err.message}`);
+      console.error('Finch callback error:', err.message);
+      res.writeHead(302, { Location: `/app?finch_error=${encodeURIComponent(err.message)}` });
+      return res.end();
     }
   }
 
