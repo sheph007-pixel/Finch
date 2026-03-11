@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Login</title><link rel="stylesheet" href="/styles.css" /></head>
+<body><main><h1>Log in</h1><form id="login-form">
+  <input name="email" type="email" placeholder="Email" required />
+  <input name="password" type="password" placeholder="Password" required />
+  <button>Log in</button>
+</form><p id="notice" class="notice"></p></main>
+<script>
+const form = document.getElementById('login-form');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(form).entries());
+  const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) return (document.getElementById('notice').textContent = data.error);
+  window.location.href = data.redirectTo;
+});
+</script></body></html>
