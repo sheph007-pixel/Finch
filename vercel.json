@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/signup", "destination": "/signup.html" },
+    { "source": "/login", "destination": "/login.html" },
+    { "source": "/admin", "destination": "/admin.html" },
+    { "source": "/app", "destination": "/app.html" },
+    { "source": "/api/(.*)", "destination": "/api/index.js" }
+  ]
+}

@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>App Workspace</title><link rel="stylesheet" href="/styles.css" /></head>
+<body><main><h1>Customer App Workspace</h1><p class="muted">Finch integration status and company snapshot.</p>
+<div class="grid"><div class="card"><h3>Connected Finch modules</h3><pre id="modules">Loading...</pre></div>
+<div class="card"><h3>Company profile</h3><pre id="profile">Loading...</pre></div></div>
+<button id="sync">Sync Finch Data</button>
+<button id="logout">Logout</button>
+</main>
+<script>
+async function load() {
+  const res = await fetch('/api/app/dashboard');
+  if (!res.ok) {
+    document.getElementById('profile').textContent = 'Unauthorized. Login or sign up first.';
+    document.getElementById('modules').textContent = '-';
+    return;
+  }
+  const data = await res.json();
+  document.getElementById('modules').textContent = JSON.stringify(data.finchModulesEnabled, null, 2);
+  document.getElementById('profile').textContent = JSON.stringify(data.organization, null, 2);
+}
+load();
+document.getElementById('sync').onclick = async () => {
+  const res = await fetch('/api/finch/sync', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) return;
+  document.getElementById('profile').textContent = JSON.stringify(data.organization, null, 2);
+};
+document.getElementById('logout').onclick = async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/';
+};
+</script></body></html>

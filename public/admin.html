@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Admin</title><link rel="stylesheet" href="/styles.css" /></head>
+<body><main><h1>Admin Dashboard</h1><p class="muted">Manage sign-ups, users, and Stripe subscriptions.</p>
+<div class="card"><pre id="admin-data">Loading...</pre></div>
+<button id="logout">Logout</button></main>
+<script>
+async function load() {
+  const res = await fetch('/api/admin/overview');
+  if (!res.ok) return document.getElementById('admin-data').textContent = 'Unauthorized. Login first.';
+  document.getElementById('admin-data').textContent = JSON.stringify(await res.json(), null, 2);
+}
+load();
+document.getElementById('logout').onclick = async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/';
+};
+</script></body></html>

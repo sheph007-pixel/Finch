@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Sign Up</title><link rel="stylesheet" href="/styles.css" /></head>
+<body><main><h1>Create Account</h1><form id="signup-form">
+  <input name="fullName" placeholder="Full name" required />
+  <input name="companyName" placeholder="Company name" required />
+  <input name="email" type="email" placeholder="Email" required />
+  <input name="password" type="password" placeholder="Password" required />
+  <button>Create account</button>
+</form><p id="notice" class="notice"></p></main>
+<script>
+const form = document.getElementById('signup-form');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(form).entries());
+  const res = await fetch('/api/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) return (document.getElementById('notice').textContent = data.error);
+  window.location.href = data.redirectTo;
+});
+</script></body></html>
